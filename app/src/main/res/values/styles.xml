@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.LectorSimple" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/launch_background</item>
+    </style>
+    <style name="Theme.LectorSimple.StartBase" parent="Theme.LectorSimple">
+        <item name="android:windowBackground">@drawable/launch_background</item>
+    </style>
+    <style name="Theme.LectorSimple.Launch" parent="Theme.LectorSimple.StartBase" />
+</resources>

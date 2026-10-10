@@ -1,0 +1,5 @@
+<resources>
+    <style name="Theme.LectorSimple.Launch" parent="Theme.LectorSimple.StartBase">
+        <item name="android:windowSplashScreenBehavior">icon_preferred</item>
+    </style>
+</resources>

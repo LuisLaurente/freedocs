@@ -1,0 +1,8 @@
+<resources>
+    <style name="Theme.LectorSimple.StartBase" parent="Theme.LectorSimple">
+        <item name="android:windowBackground">@color/launch_background</item>
+        <item name="android:windowSplashScreenBackground">@color/launch_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/freedocs_splash</item>
+        <item name="android:windowSplashScreenAnimationDuration">0</item>
+    </style>
+</resources>
