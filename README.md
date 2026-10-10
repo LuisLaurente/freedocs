@@ -54,14 +54,6 @@ El APK release requiere firma antes de distribuirse. No publiques la clave de fi
 - Los límites actuales son 100 MiB para PDF, 12 MiB para Word, 8 MiB de XML descomprimido y un millón de caracteres.
 - Se adapta la clase `CleanerUtil` de POI para mantener compatibilidad con API 23. La razón y el alcance están documentados en `app/build.gradle.kts`.
 
-## Icono
-
-El icono FreeDocs se genera desde `artwork/freedocs-logo-transparent.png` mediante `tools/prepare-icons.ps1`. El script produce los recursos de launcher y de pantalla de inicio para las densidades Android. En Windows, ejecútalo con:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\prepare-icons.ps1
-```
-
 ## Licencias
 
 La app incluye Apache POI y sus dependencias, que llevan sus propios avisos de licencia en los artefactos Android. Consulta las licencias y avisos empaquetados en el APK antes de redistribuirlo, y conserva los avisos requeridos. La licencia de la imagen de marca depende de los derechos del archivo original proporcionado para el proyecto.
