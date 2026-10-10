@@ -1,5 +1,9 @@
 # FreeDocs para Android
 
+<p align="center">
+  <img src="artwork/freedocs-logo-transparent.png" alt="FreeDocs Logo" width="160" />
+</p>
+
 Lector Android ligero para abrir archivos PDF y documentos de Word desde el selector del dispositivo. La app trabaja localmente y permite ampliar el contenido con gestos de zoom.
 
 > **Estado:** PDF tiene vista por páginas con zoom. DOC y DOCX se pueden abrir, pero actualmente se muestran como texto con formato simplificado. La vista Word por hojas con paginación y diseño de impresión todavía está pendiente; consulta [WORD_POR_HOJAS.md](WORD_POR_HOJAS.md).
