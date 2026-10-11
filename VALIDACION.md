@@ -61,3 +61,32 @@ En Android Studio con acceso a los repositorios, sincronizar y ejecutar:
 ```
 
 Después, comprobar PDF y Word reales en Android: documentos pequeños y grandes, variantes `.doc` de Word 97–2007 y Word 6/95, archivos dañados/protegidos, zoom, desplazamiento, cambio de página/documento, rotación y permisos de distintos proveedores. Comprobar memoria en un dispositivo modesto y la pantalla en Android 15 o posterior.
+
+---
+
+## Validación Sesión: Integración LibreOfficeKit (11 de octubre de 2026)
+
+Rama: `feature/word-sheet-libreoffice`
+
+### 1. Entorno de compilación
+- JDK: OpenJDK 17 (Temurin 17.0.20.1) configurado en `/home/laurent/.jdks/jdk-17`.
+- Android SDK: Command-line tools 12.0 instalados en `/home/laurent/Android/Sdk`.
+- Plataformas: Android SDK 34 y 35; Build-Tools 35.0.0 y 34.0.0.
+- Android NDK: 27.2.12479018.
+
+### 2. Motor nativo y recursos integrados
+- Revisión oficial fijada: `libreoffice-26.2.6.3` (commit `8221e31b3ac356a1623c672912a3d2b492f7e3d1`).
+- Clases JNI/Java oficiales añadidas en `org.libreoffice.kit` (`LibreOfficeKit`, `Office`, `Document`, `DirectBufferAllocator`).
+- Bibliotecas nativas empaquetadas para `arm64-v8a` y `x86_64` (`liblo-native-code.so`, `libc++_shared.so`, NSS/NSPR).
+- Recursos de configuración UNO y tipografías métricas (Liberation, Carlito, Caladea) empaquetados en `assets/`.
+
+### 3. Resultados de compilación
+- `gradlew assembleDebug` ejecutado con éxito (`BUILD SUCCESSFUL`).
+- APK generado en `app/build/outputs/apk/debug/app-debug.apk` (175 MiB con ambas arquitecturas `arm64-v8a` y `x86_64`).
+- `aapt2 dump badging` verificado:
+  - `minSdkVersion: 23`
+  - `targetSdkVersion: 35`
+  - `compileSdkVersion: 35`
+  - `native-code: 'arm64-v8a' 'x86_64'`
+  - 0 permisos solicitados (sin INTERNET, sin WRITE_EXTERNAL_STORAGE).
+

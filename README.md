@@ -6,17 +6,17 @@
 
 Lector Android ligero para abrir archivos PDF y documentos de Word desde el selector del dispositivo. La app trabaja localmente y permite ampliar el contenido con gestos de zoom.
 
-> **Estado:** PDF tiene vista por páginas con zoom. DOC y DOCX se pueden abrir, pero actualmente se muestran como texto con formato simplificado. La vista Word por hojas con paginación y diseño de impresión todavía está pendiente; consulta [WORD_POR_HOJAS.md](WORD_POR_HOJAS.md).
+> **Estado:** PDF tiene vista por páginas con zoom. DOC y DOCX disponen de vista **Hoja (Diseño)** con paginación, márgenes, tablas, imágenes y zoom fiel vía el motor offline de LibreOfficeKit, además de la vista conmutable **Móvil (Texto)** con texto reajustado al ancho. Consulta [WORD_POR_HOJAS.md](WORD_POR_HOJAS.md) y [LEGAL_NOTICE.md](LEGAL_NOTICE.md).
 
 ## Funciones
 
 - Abrir PDF, DOCX y DOC mediante el selector de archivos de Android.
 - Leer PDF por páginas, navegar entre ellas y ampliar hasta 6× con pellizco o doble toque.
-- Ampliar o reducir el texto Word con pellizco; el texto se ajusta al ancho disponible.
-- Mantener el archivo original intacto. La app copia el documento seleccionado a su almacenamiento privado para leerlo.
-- No solicita permiso de Internet ni acceso general al almacenamiento.
-
-La vista actual de Word conserva texto, saltos de línea y separaciones de celdas de tablas. No reproduce todavía la paginación, imágenes ni todos los estilos de Word. Algunos documentos dañados, cifrados o con características antiguas pueden no abrirse.
+- Vista Word **Hoja**: lectura fiel por páginas conservando el formato original, tamaño de papel, márgenes, tablas e imágenes mediante conversión local y visor por bloques con zoom.
+- Vista Word **Móvil**: lectura de texto con ajuste automático al ancho de la pantalla y zoom con pellizco.
+- Selector de modo conmutable **"Hoja | Móvil"** para Word, conservando la posición de lectura y nivel de zoom en cada vista.
+- Mantener el archivo original intacto. La app procesa el documento en su almacenamiento privado temporal y elimina los archivos temporales al cerrar el documento.
+- Funcionamiento 100% offline: no requiere conexión a Internet ni permisos de red ni acceso general al almacenamiento.
 
 ## Requisitos
 

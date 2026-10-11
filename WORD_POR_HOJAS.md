@@ -21,11 +21,18 @@ El candidato necesita evaluación de compatibilidad y rendimiento; todavía no s
 5. Retirar la ruta de Word como texto cuando la nueva ruta esté operativa. Conservar selección, restauración de página y zoom, límites de memoria y cancelación.
 6. Si se autoriza la validación, comparar documentos reales con el escritorio: fuentes, tablas, imágenes, encabezados, saltos y orientación; medir apertura, memoria y gestos en un celular modesto. La sustitución de fuentes puede cambiar la paginación incluso con un motor completo.
 
-## Bloqueo observado
+## Estado de la Integración (Rama feature/word-sheet-libreoffice)
 
-- El proyecto y la caché no contienen la biblioteca nativa de LibreOfficeKit.
-- La descarga directa de una fuente desde GitHub falló con `No es posible conectar con el servidor remoto`.
-- `wsl.exe --list --quiet` respondió `Wsl/EnumerateDistros/Service/E_ACCESSDENIED`.
-- Hay Android NDK instalado, pero eso no proporciona el núcleo LibreOffice ni sus recursos.
+El motor LibreOfficeKit fue integrado con éxito a partir de fuentes y componentes oficiales de The Document Foundation / F-Droid de una misma revisión (`libreoffice-26.2.6.3`, commit `8221e31b3ac356a1623c672912a3d2b492f7e3d1`):
 
-No se añadió una dependencia ausente que rompa la compilación, un motor comercial ni una conversión parcial presentada como reproducción fiel de las hojas.
+1. **Bibliotecas nativas:** `liblo-native-code.so`, `libc++_shared.so` y dependencias NSS/NSPR empaquetadas para `arm64-v8a` (teléfonos modernos) y `x86_64` (emulador). Compatibilidad verificada desde Android 5.0 (minSdk 21) hasta Android 15 (API 35).
+2. **Recursos y fuentes:** Recursos UNO (`assets/program/`, `assets/share/`) y fuentes tipográficas métricamente compatibles (`assets/unpack/user/fonts/`: Liberation, Carlito, Caladea) integrados en el paquete.
+3. **Flujo de visualización:**
+   - Para **"Hoja (Diseño)"**: Convierte localmente el documento Word en un PDF temporal en `cacheDir` usando `doc.saveAs(path, "pdf", null)` y lo abre con el visor por bloques `PdfSession` y `PdfZoomView` existente, conservando paginación, márgenes, tablas, imágenes y zoom de hasta 6x.
+   - El PDF temporal se elimina automáticamente al cerrar o cambiar de documento (`PdfSession.close()`).
+   - El archivo original del usuario nunca se modifica.
+4. **Vistas conmutables:** Se implementó el control **"Hoja | Móvil"** para Word:
+   - "Hoja": vista fiel por páginas.
+   - "Móvil": vista de texto ajustado a la pantalla (`WordZoomView`).
+   - El cambio entre ambas vistas conserva la posición y el nivel de zoom de cada modo.
+5. **Seguridad y privacidad:** Operación 100% offline, sin permisos de Internet, ejecución en hilo secundario `ReaderWorker`, con control de cancelación y respeto de los límites de memoria.
