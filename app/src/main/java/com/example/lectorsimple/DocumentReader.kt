@@ -32,7 +32,11 @@ object DocumentReader {
     private fun prepareCache(cacheDir: File) {
         if (cachePrepared) return
         // Only once per process: remove reader files left behind by a killed process.
-        cacheDir.listFiles { file -> file.isFile && file.name.startsWith("reader-") && file.name.endsWith(".bin") }
+        cacheDir.listFiles { file -> file.isFile && (
+            (file.name.startsWith("reader-") && file.name.endsWith(".bin")) ||
+            (file.name.startsWith("reader-fonts-") && file.name.endsWith(".docx")) ||
+            (file.name.startsWith("reader-sheet-") && file.name.endsWith(".pdf"))
+        ) }
             ?.forEach { it.delete() }
         cachePrepared = true
     }

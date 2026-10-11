@@ -17,3 +17,6 @@
 -dontwarn edu.umd.cs.findbugs.annotations.Nullable
 -dontwarn edu.umd.cs.findbugs.annotations.SuppressFBWarnings
 -dontwarn org.jspecify.annotations.NullMarked
+
+# LibreOffice JNI looks up wrapper fields and callbacks by their original names.
+-keep class org.libreoffice.kit.** { *; }

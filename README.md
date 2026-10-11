@@ -5,7 +5,7 @@
 </p>
 
 Lector Android ligero para abrir archivos PDF y documentos de Word desde el selector del dispositivo. La app trabaja localmente y permite ampliar el contenido con gestos de zoom.
-
+Ahora
 > **Estado:** PDF tiene vista por páginas con zoom. DOC y DOCX disponen de vista **Hoja (Diseño)** con paginación, márgenes, tablas, imágenes y zoom fiel vía el motor offline de LibreOfficeKit, además de la vista conmutable **Móvil (Texto)** con texto reajustado al ancho. Consulta [WORD_POR_HOJAS.md](WORD_POR_HOJAS.md) y [LEGAL_NOTICE.md](LEGAL_NOTICE.md).
 
 ## Funciones

@@ -20,15 +20,23 @@ object LibreOfficeEngine {
     fun ensureInitialized(activity: Activity) {
         if (initialized) return
         try {
+            LibreOfficeResources.prepare(activity.applicationContext)
+            checkCancelled()
             Log.i(TAG, "Inicializando LibreOfficeKit...")
             LibreOfficeKit.putenv("SAL_LOG=+WARN+INFO")
             LibreOfficeKit.putenv("SAL_LOK_OPTIONS=compact_fonts")
+            LibreOfficeKit.putenv("XDG_CACHE_HOME=${activity.cacheDir.absolutePath}")
             LibreOfficeKit.init(activity)
+            checkNotNull(LibreOfficeKit.getLibreOfficeKitHandle()) {
+                "LibreOfficeKit no devolvió un controlador después de inicializar."
+            }
             initialized = true
             Log.i(TAG, "LibreOfficeKit inicializado exitosamente.")
+        } catch (interrupted: InterruptedIOException) {
+            throw interrupted
         } catch (t: Throwable) {
             Log.e(TAG, "Error inicializando LibreOfficeKit", t)
-            throw ReadingException("No se pudo iniciar el motor de lectura por hojas: ${t.message}")
+            throw ReadingException("No se pudo preparar el lector de Word. Comprueba el espacio disponible y vuelve a abrir el documento.")
         }
     }
 
@@ -41,6 +49,16 @@ object LibreOfficeEngine {
         checkCancelled()
         ensureInitialized(activity)
         checkCancelled()
+
+        val compatibleSource = DocxFontCompatibility.prepare(sourceWordFile, activity.cacheDir)
+        try {
+            convertPreparedWordToPdf(compatibleSource ?: sourceWordFile, outputPdfFile)
+        } finally {
+            compatibleSource?.delete()
+        }
+    }
+
+    private fun convertPreparedWordToPdf(sourceWordFile: File, outputPdfFile: File) {
 
         val handle = LibreOfficeKit.getLibreOfficeKitHandle()
             ?: throw ReadingException("El motor de LibreOffice no proporcionó un controlador válido.")
@@ -66,11 +84,13 @@ object LibreOfficeEngine {
             checkCancelled()
             val outputPath = outputPdfFile.absolutePath
             Log.i(TAG, "Convirtiendo documento a PDF: $outputPath")
-            doc.saveAs(outputPath, "pdf", null)
+            // The native JNI wrapper calls GetStringUTFChars for all three arguments;
+            // a null options argument aborts the entire Android process.
+            doc.saveAs(outputPath, "pdf", "")
             checkCancelled()
             if (!outputPdfFile.exists() || outputPdfFile.length() == 0L) {
                 // Intento alternativo con esquema URI si la ruta plana no generó archivo
-                doc.saveAs("file://$outputPath", "pdf", null)
+                doc.saveAs("file://$outputPath", "pdf", "")
             }
         } catch (interrupted: InterruptedException) {
             outputPdfFile.delete()

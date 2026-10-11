@@ -64,6 +64,15 @@ Después, comprobar PDF y Word reales en Android: documentos pequeños y grandes
 
 ---
 
+## Corrección de preparación de LibreOffice (11 de octubre de 2026)
+
+- El cierre observado era un SIGABRT con `uno::DeploymentException` durante `initializeNative`, antes de cargar el documento.
+- La inspección mediante `adb shell run-as com.example.lectorsimple` confirmó que faltaban `program/`, `etc/fonts/` y `user/fonts/` en los datos privados. `unorc` referencia las bases UNO en ese directorio.
+- Se añadió `LibreOfficeResources`: extrae `assets/unpack/` antes de JNI, comprueba recursos obligatorios, usa escritura atómica por archivo y registra tamaños e identidad de la instalación solo al completar la extracción. Reintenta si fue interrumpida o faltan archivos.
+- La inicialización Java ahora comunica un retorno nativo fallido y el motor comprueba su controlador antes de marcarse listo. Se preservan las clases JNI en R8.
+- Al reproducir con los recursos preparados, ART identificó el siguiente fallo: `GetStringUTFChars received NULL jstring` desde `Document.saveAs(String, String, String)`. El wrapper JNI no acepta `null` para opciones; se cambió por cadena vacía en ambas llamadas de exportación.
+- Compilación local posterior `:app:assembleDebug --offline`: **BUILD SUCCESSFUL**. `adb install -r` fue rechazado porque el APK y la instalación existente tienen certificados distintos; no se desinstaló la app ni se borraron sus datos. Falta instalar el APK actualizado y abrir DOC/DOCX para validar en ejecución.
+
 ## Validación Sesión: Integración LibreOfficeKit (11 de octubre de 2026)
 
 Rama: `feature/word-sheet-libreoffice`

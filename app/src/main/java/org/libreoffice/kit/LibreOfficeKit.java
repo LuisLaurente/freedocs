@@ -68,7 +68,8 @@ public final class LibreOfficeKit
 
         if (!initializeNative(dataDir, cacheDir, apkFile, mgr)) {
             Log.e(LOGTAG, "Initialize native failed!");
-            return;
+            // FreeDocs modification: report failure instead of silently marking the engine ready.
+            throw new IllegalStateException("LibreOfficeKit native initialization failed");
         }
         initializeDone = true;
     }

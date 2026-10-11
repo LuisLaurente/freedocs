@@ -58,7 +58,8 @@ class MainActivity : Activity() {
         setTheme(R.style.Theme_LectorSimple)
         super.onCreate(savedInstanceState)
         buildScreen()
-        savedInstanceState?.getString("uri")?.let {
+        val restoredUri = savedInstanceState?.getString("uri")
+        if (restoredUri != null) {
             pendingState = savedInstanceState.getBundle("position")
             savedHojaState = savedInstanceState.getBundle("hoja_position")
             savedMovilState = savedInstanceState.getBundle("movil_position")
@@ -66,8 +67,22 @@ class MainActivity : Activity() {
             savedInstanceState.getString("word_mode")?.let { modeStr ->
                 wordMode = try { WordViewMode.valueOf(modeStr) } catch (_: Exception) { WordViewMode.HOJA }
             }
-            openDocument(Uri.parse(it), restoring = true)
+            openDocument(Uri.parse(restoredUri), restoring = true)
+        } else {
+            openIncomingDocument(intent)
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        openIncomingDocument(intent)
+    }
+
+    private fun openIncomingDocument(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val incoming = intent.data ?: return
+        openDocument(incoming)
     }
 
     private fun buildScreen() {
@@ -340,9 +355,9 @@ class MainActivity : Activity() {
         controls.addView(previous, LinearLayout.LayoutParams(0, -2, 1f))
         controls.addView(pageLabel, LinearLayout.LayoutParams(0, -2, 1f))
         controls.addView(next, LinearLayout.LayoutParams(0, -2, 1f))
-        content.addView(controls, LinearLayout.LayoutParams(-1, -2))
         pdfView = PdfZoomView(this, ::renderFrame)
         content.addView(pdfView, LinearLayout.LayoutParams(-1, 0, 1f))
+        content.addView(controls, LinearLayout.LayoutParams(-1, -2))
         pdfView?.showPage(page, size, restoreState)
         updateControls()
     }
