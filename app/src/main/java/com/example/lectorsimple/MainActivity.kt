@@ -3,6 +3,7 @@ package com.example.lectorsimple
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -14,13 +15,19 @@ import android.view.WindowInsetsController
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import java.io.File
 import java.io.InterruptedIOException
 import java.util.concurrent.Future
 import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicInteger
 
+enum class WordViewMode { HOJA, MOVIL }
+
 class MainActivity : Activity() {
     private lateinit var content: LinearLayout
+    private lateinit var modeBar: LinearLayout
+    private lateinit var btnHoja: Button
+    private lateinit var btnMovil: Button
     private lateinit var title: TextView
     private lateinit var previous: Button
     private lateinit var next: Button
@@ -36,9 +43,14 @@ class MainActivity : Activity() {
     private var session: PdfSession? = null
     private var pdfView: PdfZoomView? = null
     private var wordView: WordZoomView? = null
+    private var currentDocument: LocalDocument? = null
+    private var currentWordText: String? = null
     private var uri: Uri? = null
     private var page = 0
     private var pageCount = 0
+    private var wordMode = WordViewMode.HOJA
+    private var savedHojaState: Bundle? = null
+    private var savedMovilState: Bundle? = null
     private var pendingState: Bundle? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -46,11 +58,31 @@ class MainActivity : Activity() {
         setTheme(R.style.Theme_LectorSimple)
         super.onCreate(savedInstanceState)
         buildScreen()
-        savedInstanceState?.getString("uri")?.let {
+        val restoredUri = savedInstanceState?.getString("uri")
+        if (restoredUri != null) {
             pendingState = savedInstanceState.getBundle("position")
+            savedHojaState = savedInstanceState.getBundle("hoja_position")
+            savedMovilState = savedInstanceState.getBundle("movil_position")
             page = savedInstanceState.getInt("page", 0)
-            openDocument(Uri.parse(it), restoring = true)
+            savedInstanceState.getString("word_mode")?.let { modeStr ->
+                wordMode = try { WordViewMode.valueOf(modeStr) } catch (_: Exception) { WordViewMode.HOJA }
+            }
+            openDocument(Uri.parse(restoredUri), restoring = true)
+        } else {
+            openIncomingDocument(intent)
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        openIncomingDocument(intent)
+    }
+
+    private fun openIncomingDocument(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val incoming = intent.data ?: return
+        openDocument(incoming)
     }
 
     private fun buildScreen() {
@@ -81,9 +113,29 @@ class MainActivity : Activity() {
             text = "Abrir documento"
             setOnClickListener { chooseDocument() }
         }
+
+        // Barra conmutadora "Hoja | Móvil" para documentos Word
+        modeBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+            setPadding(dp(12), dp(4), dp(12), dp(4))
+        }
+        btnHoja = Button(this).apply {
+            text = "Hoja (Diseño)"
+            setOnClickListener { switchWordMode(WordViewMode.HOJA) }
+        }
+        btnMovil = Button(this).apply {
+            text = "Móvil (Texto)"
+            setOnClickListener { switchWordMode(WordViewMode.MOVIL) }
+        }
+        modeBar.addView(btnHoja, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(0, 0, dp(4), 0) })
+        modeBar.addView(btnMovil, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(4), 0, 0, 0) })
+
         content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(title, LinearLayout.LayoutParams(-1, -2))
         root.addView(open, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(12), 0, dp(12), 0) })
+        root.addView(modeBar, LinearLayout.LayoutParams(-1, -2))
         root.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
         if (Build.VERSION.SDK_INT >= 30) {
@@ -135,21 +187,33 @@ class MainActivity : Activity() {
         pdfView = null
         wordView = null
         uri = selected
-        if (!restoring) { page = 0; pendingState = null }
+        if (!restoring) {
+            page = 0
+            pendingState = null
+            savedHojaState = null
+            savedMovilState = null
+            wordMode = WordViewMode.HOJA
+        }
         val requestedPage = page
         title.text = "Lector simple"
+        modeBar.visibility = View.GONE
         showMessage("Abriendo documento…")
         loading = worker.submit {
             closeSession()
+            closeCurrentDocument()
+            currentWordText = null
             var local: LocalDocument? = null
             try {
                 local = DocumentReader.stage(contentResolver, selected, cacheDir)
                 DocumentReader.checkCancelled()
                 val name = local.name
+                currentDocument = local
+
                 if (local.kind == DocumentKind.PDF) {
                     val pdf = PdfSession(local.file)
                     session = pdf
-                    local = null // The PdfSession owns the temporary file now.
+                    // PdfSession owns the file now
+                    currentDocument = null
                     val count = pdf.pageCount
                     val selectedPage = requestedPage.coerceIn(0, count - 1)
                     val size = pdf.pageSize(selectedPage)
@@ -158,34 +222,131 @@ class MainActivity : Activity() {
                             title.text = name
                             page = selectedPage
                             pageCount = count
-                            showPdf(size)
+                            modeBar.visibility = View.GONE
+                            showPdf(size, pendingState)
+                            pendingState = null
                         }
                     }
                 } else {
-                    val text = DocumentReader.readWord(local)
+                    // Documento Word (.doc o .docx)
                     runOnUiThread {
                         if (generation.get() == revision && !isDestroyed) {
                             title.text = name
-                            content.removeAllViews()
-                            wordView = WordZoomView(this, text, pendingState)
-                            pendingState = null
-                            content.addView(wordView, LinearLayout.LayoutParams(-1, -1))
+                            modeBar.visibility = View.VISIBLE
+                            updateModeButtons()
                         }
+                    }
+                    if (wordMode == WordViewMode.HOJA) {
+                        displayWordAsHoja(local, requestedPage, revision, name, pendingState ?: savedHojaState)
+                        pendingState = null
+                    } else {
+                        displayWordAsMovil(local, revision, name, pendingState ?: savedMovilState)
+                        pendingState = null
                     }
                 }
             } catch (failure: Exception) {
                 closeSession()
+                closeCurrentDocument()
                 reportFailure(failure, revision)
             } catch (_: OutOfMemoryError) {
                 closeSession()
+                closeCurrentDocument()
                 reportFailure(ReadingException("El documento necesita demasiada memoria."), revision)
-            } finally {
-                local?.file?.delete()
             }
         }
     }
 
-    private fun showPdf(size: Pair<Int, Int>) {
+    private fun displayWordAsHoja(local: LocalDocument, requestedPage: Int, revision: Int, docTitle: String, stateToRestore: Bundle?) {
+        val sheetTempPdf = File.createTempFile("reader-sheet-", ".pdf", cacheDir)
+        try {
+            LibreOfficeEngine.convertWordToPdf(this@MainActivity, local.file, sheetTempPdf)
+            DocumentReader.checkCancelled()
+            val pdf = PdfSession(sheetTempPdf)
+            session = pdf
+            val count = pdf.pageCount
+            val selectedPage = requestedPage.coerceIn(0, count - 1)
+            val size = pdf.pageSize(selectedPage)
+            runOnUiThread {
+                if (generation.get() == revision && !isDestroyed) {
+                    title.text = docTitle
+                    page = selectedPage
+                    pageCount = count
+                    modeBar.visibility = View.VISIBLE
+                    updateModeButtons()
+                    showPdf(size, stateToRestore)
+                }
+            }
+        } catch (t: Throwable) {
+            sheetTempPdf.delete()
+            throw t
+        }
+    }
+
+    private fun displayWordAsMovil(local: LocalDocument, revision: Int, docTitle: String, stateToRestore: Bundle?) {
+        val text = currentWordText ?: DocumentReader.readWord(local).also { currentWordText = it }
+        runOnUiThread {
+            if (generation.get() == revision && !isDestroyed) {
+                title.text = docTitle
+                modeBar.visibility = View.VISIBLE
+                updateModeButtons()
+                content.removeAllViews()
+                wordView = WordZoomView(this@MainActivity, text, stateToRestore)
+                content.addView(wordView, LinearLayout.LayoutParams(-1, -1))
+            }
+        }
+    }
+
+    private fun switchWordMode(targetMode: WordViewMode) {
+        if (wordMode == targetMode) return
+        val doc = currentDocument ?: return
+        val revision = generation.incrementAndGet()
+        frameVersion++
+        loading?.cancel(true)
+        rendering?.cancel(true)
+        worker.purge()
+
+        if (wordMode == WordViewMode.HOJA) {
+            savedHojaState = pdfView?.savePosition()
+        } else {
+            savedMovilState = wordView?.savePosition()
+        }
+        wordMode = targetMode
+        updateModeButtons()
+
+        showMessage(if (targetMode == WordViewMode.HOJA) "Generando vista de hoja…" else "Cargando texto…")
+        loading = worker.submit {
+            try {
+                if (targetMode == WordViewMode.HOJA) {
+                    closeSession()
+                    displayWordAsHoja(doc, page, revision, doc.name, savedHojaState)
+                } else {
+                    displayWordAsMovil(doc, revision, doc.name, savedMovilState)
+                }
+            } catch (failure: Exception) {
+                reportFailure(failure, revision)
+            }
+        }
+    }
+
+    private fun updateModeButtons() {
+        if (wordMode == WordViewMode.HOJA) {
+            btnHoja.setTextColor(Color.WHITE)
+            btnHoja.setBackgroundColor(Color.rgb(35, 75, 140))
+            btnHoja.setTypeface(null, Typeface.BOLD)
+            btnMovil.setTextColor(Color.DKGRAY)
+            btnMovil.setBackgroundColor(Color.rgb(220, 224, 232))
+            btnMovil.setTypeface(null, Typeface.NORMAL)
+        } else {
+            btnMovil.setTextColor(Color.WHITE)
+            btnMovil.setBackgroundColor(Color.rgb(35, 75, 140))
+            btnMovil.setTypeface(null, Typeface.BOLD)
+            btnHoja.setTextColor(Color.DKGRAY)
+            btnHoja.setBackgroundColor(Color.rgb(220, 224, 232))
+            btnHoja.setTypeface(null, Typeface.NORMAL)
+        }
+    }
+
+    private fun showPdf(size: Pair<Int, Int>, restoreState: Bundle? = null) {
         content.removeAllViews()
         val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         previous = Button(this).apply { text = "Anterior"; setOnClickListener { changePage(page - 1) } }
@@ -194,11 +355,10 @@ class MainActivity : Activity() {
         controls.addView(previous, LinearLayout.LayoutParams(0, -2, 1f))
         controls.addView(pageLabel, LinearLayout.LayoutParams(0, -2, 1f))
         controls.addView(next, LinearLayout.LayoutParams(0, -2, 1f))
-        content.addView(controls, LinearLayout.LayoutParams(-1, -2))
         pdfView = PdfZoomView(this, ::renderFrame)
         content.addView(pdfView, LinearLayout.LayoutParams(-1, 0, 1f))
-        pdfView?.showPage(page, size, pendingState)
-        pendingState = null
+        content.addView(controls, LinearLayout.LayoutParams(-1, -2))
+        pdfView?.showPage(page, size, restoreState)
         updateControls()
     }
 
@@ -225,9 +385,11 @@ class MainActivity : Activity() {
     }
 
     private fun updateControls() {
-        previous.isEnabled = page > 0
-        next.isEnabled = page < pageCount - 1
-        pageLabel.text = "${page + 1} / $pageCount"
+        if (::previous.isInitialized && ::next.isInitialized && ::pageLabel.isInitialized) {
+            previous.isEnabled = page > 0
+            next.isEnabled = page < pageCount - 1
+            pageLabel.text = "${page + 1} / $pageCount"
+        }
     }
 
     private fun renderFrame(viewport: PdfViewport) {
@@ -275,9 +437,13 @@ class MainActivity : Activity() {
                 generation.incrementAndGet()
                 frameVersion++
                 rendering?.cancel(true)
-                worker.execute { closeSession() }
+                worker.execute {
+                    closeSession()
+                    closeCurrentDocument()
+                }
                 pdfView = null
                 wordView = null
+                modeBar.visibility = View.GONE
                 showMessage(message)
             }
         }
@@ -298,8 +464,12 @@ class MainActivity : Activity() {
         super.onSaveInstanceState(outState)
         outState.putString("uri", uri?.toString())
         outState.putInt("page", page)
-        outState.putBundle("position", if (pdfView != null && ::previous.isInitialized && !previous.isEnabled && !next.isEnabled && pageCount > 1)
-            null else pdfView?.savePosition() ?: wordView?.savePosition() ?: pendingState)
+        outState.putString("word_mode", wordMode.name)
+        val currentPosition = if (pdfView != null && ::previous.isInitialized && !previous.isEnabled && !next.isEnabled && pageCount > 1)
+            null else pdfView?.savePosition() ?: wordView?.savePosition() ?: pendingState
+        outState.putBundle("position", currentPosition)
+        outState.putBundle("hoja_position", if (wordMode == WordViewMode.HOJA) pdfView?.savePosition() else savedHojaState)
+        outState.putBundle("movil_position", if (wordMode == WordViewMode.MOVIL) wordView?.savePosition() else savedMovilState)
     }
 
     private fun closeSession() {
@@ -308,12 +478,21 @@ class MainActivity : Activity() {
         closing?.close()
     }
 
+    private fun closeCurrentDocument() {
+        val doc = currentDocument
+        currentDocument = null
+        doc?.file?.delete()
+    }
+
     override fun onDestroy() {
         generation.incrementAndGet()
         loading?.cancel(true)
         rendering?.cancel(true)
         worker.purge()
-        worker.execute { closeSession() }
+        worker.execute {
+            closeSession()
+            closeCurrentDocument()
+        }
         super.onDestroy()
     }
 

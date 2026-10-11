@@ -23,6 +23,9 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     compileOptions {
@@ -32,6 +35,9 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
         resources.merges += setOf("META-INF/LICENSE*", "META-INF/NOTICE*", "META-INF/DEPENDENCIES")
     }
     buildTypes {

@@ -61,3 +61,41 @@ En Android Studio con acceso a los repositorios, sincronizar y ejecutar:
 ```
 
 Después, comprobar PDF y Word reales en Android: documentos pequeños y grandes, variantes `.doc` de Word 97–2007 y Word 6/95, archivos dañados/protegidos, zoom, desplazamiento, cambio de página/documento, rotación y permisos de distintos proveedores. Comprobar memoria en un dispositivo modesto y la pantalla en Android 15 o posterior.
+
+---
+
+## Corrección de preparación de LibreOffice (11 de octubre de 2026)
+
+- El cierre observado era un SIGABRT con `uno::DeploymentException` durante `initializeNative`, antes de cargar el documento.
+- La inspección mediante `adb shell run-as com.example.lectorsimple` confirmó que faltaban `program/`, `etc/fonts/` y `user/fonts/` en los datos privados. `unorc` referencia las bases UNO en ese directorio.
+- Se añadió `LibreOfficeResources`: extrae `assets/unpack/` antes de JNI, comprueba recursos obligatorios, usa escritura atómica por archivo y registra tamaños e identidad de la instalación solo al completar la extracción. Reintenta si fue interrumpida o faltan archivos.
+- La inicialización Java ahora comunica un retorno nativo fallido y el motor comprueba su controlador antes de marcarse listo. Se preservan las clases JNI en R8.
+- Al reproducir con los recursos preparados, ART identificó el siguiente fallo: `GetStringUTFChars received NULL jstring` desde `Document.saveAs(String, String, String)`. El wrapper JNI no acepta `null` para opciones; se cambió por cadena vacía en ambas llamadas de exportación.
+- Compilación local posterior `:app:assembleDebug --offline`: **BUILD SUCCESSFUL**. `adb install -r` fue rechazado porque el APK y la instalación existente tienen certificados distintos; no se desinstaló la app ni se borraron sus datos. Falta instalar el APK actualizado y abrir DOC/DOCX para validar en ejecución.
+
+## Validación Sesión: Integración LibreOfficeKit (11 de octubre de 2026)
+
+Rama: `feature/word-sheet-libreoffice`
+
+### 1. Entorno de compilación
+- JDK: OpenJDK 17 (Temurin 17.0.20.1) configurado en `/home/laurent/.jdks/jdk-17`.
+- Android SDK: Command-line tools 12.0 instalados en `/home/laurent/Android/Sdk`.
+- Plataformas: Android SDK 34 y 35; Build-Tools 35.0.0 y 34.0.0.
+- Android NDK: 27.2.12479018.
+
+### 2. Motor nativo y recursos integrados
+- Revisión oficial fijada: `libreoffice-26.2.6.3` (commit `8221e31b3ac356a1623c672912a3d2b492f7e3d1`).
+- Clases JNI/Java oficiales añadidas en `org.libreoffice.kit` (`LibreOfficeKit`, `Office`, `Document`, `DirectBufferAllocator`).
+- Bibliotecas nativas empaquetadas para `arm64-v8a` y `x86_64` (`liblo-native-code.so`, `libc++_shared.so`, NSS/NSPR).
+- Recursos de configuración UNO y tipografías métricas (Liberation, Carlito, Caladea) empaquetados en `assets/`.
+
+### 3. Resultados de compilación
+- `gradlew assembleDebug` ejecutado con éxito (`BUILD SUCCESSFUL`).
+- APK generado en `app/build/outputs/apk/debug/app-debug.apk` (175 MiB con ambas arquitecturas `arm64-v8a` y `x86_64`).
+- `aapt2 dump badging` verificado:
+  - `minSdkVersion: 23`
+  - `targetSdkVersion: 35`
+  - `compileSdkVersion: 35`
+  - `native-code: 'arm64-v8a' 'x86_64'`
+  - 0 permisos solicitados (sin INTERNET, sin WRITE_EXTERNAL_STORAGE).
+
