@@ -62,6 +62,14 @@ En Android Studio con acceso a los repositorios, sincronizar y ejecutar:
 
 Después, comprobar PDF y Word reales en Android: documentos pequeños y grandes, variantes `.doc` de Word 97–2007 y Word 6/95, archivos dañados/protegidos, zoom, desplazamiento, cambio de página/documento, rotación y permisos de distintos proveedores. Comprobar memoria en un dispositivo modesto y la pantalla en Android 15 o posterior.
 
+## Edición PDF y ajuste DOCX (15 de octubre de 2026)
+
+- DOCX: `DocxFontCompatibility.prepare()` recorre los XML de texto bajo `word/`, conserva la cantidad original de guiones y añade `U+200B` entre guiones consecutivos. Mantiene el mapeo de fuentes Office a las fuentes métricas del paquete. No modifica `w:docGrid`, `w:compatSetting` ni `w:usePrinterMetrics`.
+- PDF: la vista ofrece modo de edición con texto, reemplazo visual de renglón, mover cuadros de texto, firma/dibujo, resaltado, borrar, deshacer y guardado. La exportación usa `PdfDocument` de Android y no agrega dependencias Gradle.
+- La exportación PDF rasteriza cada página original y dibuja encima las ediciones. El resultado preserva la apariencia visual, pero el texto original de la copia exportada no queda seleccionable ni buscable. El guardado directo depende de que el proveedor del URI permita escribir; si no, se puede crear una copia.
+- Renderizado PDF: la preview permite escala hasta 1.5 para el límite de píxeles configurado; los bounds de tiles compensan el redondeo del bitmap. La página se escala usando todo el ancho de `PdfZoomView`.
+- Verificación: `assembleDebug --offline` terminó con `BUILD SUCCESSFUL`; `git diff --check` no reportó errores de whitespace. No se hizo una comparación visual de un DOCX contractual en dispositivo ni pruebas de uso del editor en Android. Por tanto, la compilación no confirma paginación 1:1 con Word ni el resultado de guardado con proveedores reales.
+
 ---
 
 ## Corrección de preparación de LibreOffice (11 de octubre de 2026)

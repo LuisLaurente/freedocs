@@ -35,7 +35,9 @@ object DocumentReader {
         cacheDir.listFiles { file -> file.isFile && (
             (file.name.startsWith("reader-") && file.name.endsWith(".bin")) ||
             (file.name.startsWith("reader-fonts-") && file.name.endsWith(".docx")) ||
-            (file.name.startsWith("reader-sheet-") && file.name.endsWith(".pdf"))
+            (file.name.startsWith("reader-sheet-") && file.name.endsWith(".pdf")) ||
+            (file.name.startsWith("reader-edited-") && file.name.endsWith(".pdf")) ||
+            (file.name.startsWith("reader-export-") && file.name.endsWith(".pdf"))
         ) }
             ?.forEach { it.delete() }
         cachePrepared = true

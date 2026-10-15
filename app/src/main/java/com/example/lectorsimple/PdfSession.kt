@@ -15,7 +15,7 @@ data class PdfViewport(val page: Int, val scale: Float, val tiles: List<PdfTileK
 data class PdfFrame(val page: Int, val key: PdfTileKey?, val bitmap: Bitmap, val bounds: android.graphics.RectF)
 
 /** All access is serialized by MainActivity's worker, including close. */
-class PdfSession(private val file: File) : Closeable {
+class PdfSession(internal val file: File) : Closeable {
     private val renderer: PdfRenderer
     val pageCount: Int get() = renderer.pageCount
 
@@ -40,8 +40,8 @@ class PdfSession(private val file: File) : Closeable {
         DocumentReader.checkCancelled()
         renderer.openPage(viewport.page).use { page ->
             if (viewport.preview) {
-                // Full-page fallback, capped at 262,144 pixels (1 MiB).
-                val scale = minOf(1.0, kotlin.math.sqrt(262_144.0 / (page.width.toDouble() * page.height))).toFloat()
+                // Match the visual weight of the first detail tiles while limiting memory use.
+                val scale = minOf(1.5, kotlin.math.sqrt(786_432.0 / (page.width.toDouble() * page.height))).toFloat()
                 val bounds = android.graphics.RectF(0f, 0f, page.width.toFloat(), page.height.toFloat())
                 deliver(rasterize(page, null, bounds, scale))
             }
@@ -73,10 +73,21 @@ class PdfSession(private val file: File) : Closeable {
                 ))
             }
             page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-            return PdfFrame(page.index, key, bitmap, bounds)
+            val exactBounds = if (key == null) bounds else android.graphics.RectF(
+                bounds.left, bounds.top, bounds.left + width / scale, bounds.top + height / scale
+            )
+            return PdfFrame(page.index, key, bitmap, exactBounds)
         } catch (failure: Throwable) {
             bitmap.recycle()
             throw failure
+        }
+    }
+
+    fun renderPageBitmap(index: Int, scale: Float = 2f): Bitmap {
+        DocumentReader.checkCancelled()
+        return renderer.openPage(index).use { page ->
+            val bounds = android.graphics.RectF(0f, 0f, page.width.toFloat(), page.height.toFloat())
+            rasterize(page, null, bounds, scale).bitmap
         }
     }
 
