@@ -34,7 +34,7 @@ internal object LibreOfficeResources {
         @Suppress("DEPRECATION")
         val updateTime = context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
         // Includes APK identity so a development reinstall with the same version also refreshes assets.
-        val version = "1:$updateTime:${apk.absolutePath}:${apk.length()}:${apk.lastModified()}"
+        val version = "2:$updateTime:${apk.absolutePath}:${apk.length()}:${apk.lastModified()}"
         val preferences = context.getSharedPreferences("libreoffice-resources", Context.MODE_PRIVATE)
         val ready = preferences.getString("version", null) == version && files.all { path ->
             val file = File(dataDir, path)
@@ -44,6 +44,7 @@ internal object LibreOfficeResources {
 
         // Invalidate first. Interrupted/failed extraction must be retried before entering JNI.
         if (!preferences.edit().clear().commit()) throw IOException("No se pudo preparar LibreOffice.")
+        File(context.cacheDir, "fontconfig").deleteRecursively()
         val completed = preferences.edit()
         val buffer = ByteArray(32 * 1024)
         files.forEach { path ->
@@ -56,12 +57,21 @@ internal object LibreOfficeResources {
             var copiedBytes = 0L
             try {
                 assets.open("unpack/$path").use { input ->
+                    if (path == "etc/fonts/fonts.conf") {
+                        val config = input.readBytes().toString(Charsets.UTF_8).replace(
+                            "<!--FREEDOCS_USER_FONTS_DIR-->",
+                            "<dir>${File(dataDir, "user/fonts").absolutePath}</dir>"
+                        )
+                        output.write(config.toByteArray(Charsets.UTF_8))
+                        copiedBytes = config.toByteArray(Charsets.UTF_8).size.toLong()
+                    } else {
                     while (true) {
                         checkCancelled()
                         val count = input.read(buffer)
                         if (count < 0) break
                         output.write(buffer, 0, count)
                         copiedBytes += count
+                    }
                     }
                 }
                 if (output.channel.size() == 0L) throw IOException("Recurso vacío: $path")

@@ -2,8 +2,10 @@ package com.example.lectorsimple
 
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.PointF
 import android.graphics.RectF
 import android.os.Bundle
 import android.view.GestureDetector
@@ -20,6 +22,18 @@ import kotlin.math.sqrt
 
 /** Page preview plus reusable tiles. All bitmap/cache ownership stays on the UI thread. */
 class PdfZoomView(context: Context, private val requestFrame: (PdfViewport) -> Unit) : View(context) {
+    var editMode = false
+        set(value) { field = value; invalidate() }
+    var activeTool = PdfTool.REPLACE_TEXT
+    var documentEdits: PdfDocumentEdits? = null
+    var onEditText: ((RectF, Int, String) -> Unit)? = null
+    var onEditTap: ((PdfTool, Float, Float) -> Unit)? = null
+    var onExistingText: (String) -> String = { "" }
+    private val strokePoints = mutableListOf<PointF>()
+    private var movingEdit: PdfTextEdit? = null
+    private var moveOffsetX = 0f
+    private var moveOffsetY = 0f
+    private var moveOriginal: RectF? = null
     private var page = -1
     private var pageWidth = 0
     private var pageHeight = 0
@@ -72,7 +86,7 @@ class PdfZoomView(context: Context, private val requestFrame: (PdfViewport) -> U
         override fun onSingleTapConfirmed(event: MotionEvent): Boolean { performClick(); return true }
         override fun onFling(first: MotionEvent?, event: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
             if (scaleDetector.isInProgress || pageWidth == 0) return false
-            val scale = width.toFloat() / pageWidth * zoom
+            val scale = baseScale() * zoom
             val minX = if (pageWidth * scale > width) (width - pageWidth * scale).toInt() else x.toInt()
             val maxX = if (pageWidth * scale > width) 0 else x.toInt()
             val minY = if (pageHeight * scale > height) (height - pageHeight * scale).toInt() else y.toInt()
@@ -124,12 +138,12 @@ class PdfZoomView(context: Context, private val requestFrame: (PdfViewport) -> U
     private fun viewport(): PdfViewport? {
         if (width <= 0 || height <= 0 || pageWidth <= 0) return null
         if (scaleDetector.isInProgress && preview != null) return null
-        val displayScale = width.toFloat() / pageWidth * zoom
+        val displayScale = baseScale() * zoom
         // Discrete resolution levels let tiles survive pans and small zoom changes.
         // Cap visible detail at 2 million pixels on exceptionally large screens.
         val factor = minOf(1.0, sqrt(2_000_000.0 / (width.toDouble() * height))).toFloat()
         val level = floor(ln((zoom * factor).toDouble()) / ln(2.0) * 2).toInt()
-        val scale = width.toFloat() / pageWidth * 2.0.pow(level / 2.0).toFloat()
+        val scale = baseScale() * 2.0.pow(level / 2.0).toFloat()
         val columns = ceil(pageWidth * scale / PDF_TILE_SIZE).toInt().coerceAtLeast(1)
         val rows = ceil(pageHeight * scale / PDF_TILE_SIZE).toInt().coerceAtLeast(1)
         val left = floor(-x / displayScale * scale / PDF_TILE_SIZE).toInt().coerceIn(0, columns - 1)
@@ -179,9 +193,16 @@ class PdfZoomView(context: Context, private val requestFrame: (PdfViewport) -> U
         scheduleRender()
     }
 
+    private fun baseScale(): Float = width.toFloat() / pageWidth
+
+    private fun pagePoint(screenX: Float, screenY: Float): PointF {
+        val scale = baseScale() * zoom
+        return PointF((screenX - x) / scale, (screenY - y) / scale)
+    }
+
     private fun constrain() {
         if (pageWidth <= 0 || width <= 0) return
-        val scale = width.toFloat() / pageWidth * zoom
+        val scale = baseScale() * zoom
         val scaledWidth = pageWidth * scale
         val scaledHeight = pageHeight * scale
         x = if (scaledWidth <= width) (width - scaledWidth) / 2 else x.coerceIn(width - scaledWidth, 0f)
@@ -206,7 +227,7 @@ class PdfZoomView(context: Context, private val requestFrame: (PdfViewport) -> U
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         if (pageWidth <= 0 || width <= 0) return
-        val scale = width.toFloat() / pageWidth * zoom
+        val scale = baseScale() * zoom
         canvas.save()
         canvas.translate(x, y)
         canvas.scale(scale, scale)
@@ -221,7 +242,10 @@ class PdfZoomView(context: Context, private val requestFrame: (PdfViewport) -> U
         for ((key, image) in tiles) if (key.level == level && visible(image.bounds, scale)) {
             canvas.drawBitmap(image.bitmap, null, image.bounds, paint)
         }
+        documentEdits?.let { PdfEditRenderer.drawPageEdits(canvas, it, page) }
         canvas.restore()
+        val border = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(150, 255, 255, 255); style = Paint.Style.STROKE; strokeWidth = 1f }
+        canvas.drawRect(x, y, x + pageWidth * scale, y + pageHeight * scale, border)
     }
 
     private fun visible(bounds: RectF, scale: Float) =
@@ -231,9 +255,53 @@ class PdfZoomView(context: Context, private val requestFrame: (PdfViewport) -> U
     override fun onTouchEvent(event: MotionEvent): Boolean {
         parent?.requestDisallowInterceptTouchEvent(true)
         scaleDetector.onTouchEvent(event)
+        if (editMode && pageWidth > 0) {
+            val point = pagePoint(event.x, event.y)
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    if (event.pointerCount == 1) {
+                        when (activeTool) {
+                            PdfTool.INK, PdfTool.HIGHLIGHT -> { strokePoints.clear(); strokePoints.add(point); return true }
+                            PdfTool.MOVE -> {
+                                val found = documentEdits?.texts(page)?.lastOrNull { it.bounds.contains(point.x, point.y) }
+                                if (found != null) { movingEdit = found; moveOriginal = RectF(found.bounds); moveOffsetX = point.x - found.bounds.left; moveOffsetY = point.y - found.bounds.top; return true }
+                                onEditTap?.invoke(activeTool, point.x, point.y); return true
+                            }
+                            PdfTool.ADD_TEXT -> { onEditTap?.invoke(activeTool, point.x, point.y); return true }
+                            PdfTool.REPLACE_TEXT -> {
+                                val bitmap = preview?.bitmap
+                                val bounds = bitmap?.let { VisualLineDetector.detect(it, pageWidth, pageHeight, point.x, point.y)?.bounds }
+                                if (bounds != null) onEditText?.invoke(bounds, previewBackground(bitmap, point.x, point.y), onExistingText(""))
+                                else onEditTap?.invoke(activeTool, point.x, point.y)
+                                return true
+                            }
+                        }
+                    }
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (event.pointerCount > 1) { movingEdit = null; strokePoints.clear(); return true }
+                    movingEdit?.let { edit -> edit.bounds.offsetTo(point.x - moveOffsetX, point.y - moveOffsetY); invalidate(); return true }
+                    if (strokePoints.isNotEmpty()) { strokePoints.add(point); invalidate(); return true }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    movingEdit?.let { edit -> moveOriginal?.let { documentEdits?.recordMove(edit, it) } }
+                    movingEdit = null; moveOriginal = null
+                    if (strokePoints.size > 1) {
+                        documentEdits?.add(PdfStrokeEdit(page, strokePoints.toList(), if (activeTool == PdfTool.HIGHLIGHT) Color.YELLOW else Color.RED, if (activeTool == PdfTool.HIGHLIGHT) 14f else 2.5f, activeTool == PdfTool.HIGHLIGHT))
+                        strokePoints.clear(); invalidate(); return true
+                    }
+                }
+            }
+        }
         gestures.onTouchEvent(event)
         if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) scheduleRender()
         return true
+    }
+
+    private fun previewBackground(bitmap: Bitmap, px: Float, py: Float): Int {
+        val x = (px * bitmap.width / pageWidth).toInt().coerceIn(0, bitmap.width - 1)
+        val y = (py * bitmap.height / pageHeight).toInt().coerceIn(0, bitmap.height - 1)
+        return bitmap.getPixel(x, y)
     }
 
     override fun performClick(): Boolean { super.performClick(); return true }

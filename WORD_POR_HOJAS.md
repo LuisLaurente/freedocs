@@ -1,38 +1,25 @@
-# Word por hojas, gratis y sin conexión
+# Word por hojas
 
-## Requisito
+FreeDocs abre archivos `.doc` y `.docx` localmente con LibreOfficeKit y convierte una copia temporal a PDF para mostrar el diseño de página. La vista por hojas conserva el tamaño de página, los márgenes y la paginación que produce el motor; la vista **Móvil (Texto)** presenta el texto reajustado al ancho.
 
-Abrir DOC y DOCX dentro de la app con tamaños de hoja, márgenes, estilos, imágenes y tablas. El zoom debe ampliar la hoja sin reorganizar el texto. No usar servicios remotos ni una biblioteca comercial en modo de evaluación.
+## Compatibilidad tipográfica y guiones
 
-## Motor candidato
+Antes de convertir un DOCX, `DocxFontCompatibility` prepara una copia privada y:
 
-LibreOfficeKit (LOK), el núcleo que utiliza LibreOffice Viewer para Android. La documentación del proyecto describe su biblioteca `liblo-native-code.so`, sus clases JNI y su renderizado por bloques.
+- Mapea las fuentes comunes de Office en `<w:rFonts>` y en la tabla de tema a las familias métricas empaquetadas: Carlito, Caladea, Liberation Sans, Liberation Mono y Gentium Book Basic. Los nombres alternativos de `word/fontTable.xml` también se usan para resolver referencias en los estilos.
+- Inserta un espacio de ancho cero entre guiones consecutivos en nodos `<w:t>` de los XML de Word. La transformación conserva exactamente el número de guiones y crea puntos de corte dentro de las tiras largas.
+- Conserva la configuración de cuadrícula y compatibilidad de paginación original del DOCX.
 
-Fuente: https://github.com/LibreOffice/core/blob/master/android/README.md
+La configuración de Fontconfig se extrae en almacenamiento privado antes de inicializar LibreOfficeKit. Incluye las fuentes métricas del paquete y no activa `SAL_LOK_OPTIONS=compact_fonts`.
 
-El candidato necesita evaluación de compatibilidad y rendimiento; todavía no se incorporó ni se verificó en esta app. No es una dependencia Maven pequeña que se pueda añadir y utilizar directamente.
+La conversión solo modifica la copia temporal, nunca el archivo Word seleccionado. Los resultados dependen del contenido y de la versión de LibreOfficeKit; la compilación por sí sola no demuestra paridad visual con Word de escritorio. Para comprobar un documento, hay que comparar su paginación, fuentes, saltos de línea y tablas en un dispositivo.
 
-## Integración prevista
+## Flujo
 
-1. Obtener o compilar el núcleo Android y sus recursos desde una revisión fija de LibreOffice. Usar clases JNI, biblioteca, registro de servicios y fuentes de esa misma revisión, con sus licencias y avisos correspondientes.
-2. Empaquetar las arquitecturas necesarias para celulares y emuladores. Confirmar compatibilidad con el Android mínimo del proyecto y los dispositivos previstos.
-3. Inicializar LOK en un trabajador dedicado; abrir la copia privada seleccionada por el usuario, sin habilitar edición ni acceso remoto.
-4. Convertir localmente DOC/DOCX a un PDF temporal y abrirlo con el visor por bloques ya implementado. Mantener el archivo original intacto y eliminar el PDF al cerrar. Evaluar después el renderizado directo por bloques si la conversión completa tarda demasiado en documentos largos.
-5. Retirar la ruta de Word como texto cuando la nueva ruta esté operativa. Conservar selección, restauración de página y zoom, límites de memoria y cancelación.
-6. Si se autoriza la validación, comparar documentos reales con el escritorio: fuentes, tablas, imágenes, encabezados, saltos y orientación; medir apertura, memoria y gestos en un celular modesto. La sustitución de fuentes puede cambiar la paginación incluso con un motor completo.
+1. FreeDocs copia el archivo seleccionado al almacenamiento privado.
+2. Para DOCX, prepara una copia compatible con las fuentes locales y los cortes de guiones.
+3. LibreOfficeKit convierte el documento a un PDF temporal.
+4. `PdfSession` y `PdfZoomView` muestran las páginas con zoom y renderizado por bloques.
+5. Al cerrar el documento, se eliminan los temporales de lectura.
 
-## Estado de la Integración (Rama feature/word-sheet-libreoffice)
-
-El motor LibreOfficeKit fue integrado con éxito a partir de fuentes y componentes oficiales de The Document Foundation / F-Droid de una misma revisión (`libreoffice-26.2.6.3`, commit `8221e31b3ac356a1623c672912a3d2b492f7e3d1`):
-
-1. **Bibliotecas nativas:** `liblo-native-code.so`, `libc++_shared.so` y dependencias NSS/NSPR empaquetadas para `arm64-v8a` (teléfonos modernos) y `x86_64` (emulador). Compatibilidad verificada desde Android 5.0 (minSdk 21) hasta Android 15 (API 35).
-2. **Recursos y fuentes:** Recursos UNO (`assets/program/`, `assets/share/`) y fuentes tipográficas métricamente compatibles (`assets/unpack/user/fonts/`: Liberation, Carlito, Caladea) integrados en el paquete.
-3. **Flujo de visualización:**
-   - Para **"Hoja (Diseño)"**: Convierte localmente el documento Word en un PDF temporal en `cacheDir` usando `doc.saveAs(path, "pdf", null)` y lo abre con el visor por bloques `PdfSession` y `PdfZoomView` existente, conservando paginación, márgenes, tablas, imágenes y zoom de hasta 6x.
-   - El PDF temporal se elimina automáticamente al cerrar o cambiar de documento (`PdfSession.close()`).
-   - El archivo original del usuario nunca se modifica.
-4. **Vistas conmutables:** Se implementó el control **"Hoja | Móvil"** para Word:
-   - "Hoja": vista fiel por páginas.
-   - "Móvil": vista de texto ajustado a la pantalla (`WordZoomView`).
-   - El cambio entre ambas vistas conserva la posición y el nivel de zoom de cada modo.
-5. **Seguridad y privacidad:** Operación 100% offline, sin permisos de Internet, ejecución en hilo secundario `ReaderWorker`, con control de cancelación y respeto de los límites de memoria.
+Los DOC binarios usan la ruta de conversión local de LibreOfficeKit sin reescritura OOXML.

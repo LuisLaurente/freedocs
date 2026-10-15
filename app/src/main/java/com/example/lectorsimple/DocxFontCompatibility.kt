@@ -17,37 +17,46 @@ import javax.xml.transform.TransformerFactory
 import javax.xml.transform.dom.DOMSource
 import javax.xml.transform.stream.StreamResult
 
-/** Resolves a placeholder left by HTML/Word imports using the document's own altName.
- * LibreOffice otherwise substitutes Android's default font for the literal name "inherit".
- * Real font names stay with the native font resolver. Only a private temporary copy is edited.
- */
+/** Normalizes Word font metrics and long hyphen runs in a private DOCX copy. */
 internal object DocxFontCompatibility {
     private const val WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
     private const val STRICT_NS = "http://purl.oclc.org/ooxml/wordprocessingml/main"
     private const val MAX_XML_BYTES = 8L * 1024 * 1024
     private const val MAX_PACKAGE_BYTES = 100L * 1024 * 1024
+    private val MULTI_HYPHEN_REGEX = Regex("-{2,}")
+    private val officeFonts = mapOf(
+        "calibri" to "Carlito", "calibri light" to "Carlito", "aptos" to "Carlito", "aptos narrow" to "Carlito", "aptos display" to "Carlito",
+        "cambria" to "Caladea", "cambria math" to "Caladea", "georgia" to "Caladea",
+        "arial" to "Liberation Sans", "helvetica" to "Liberation Sans", "segoe ui" to "Liberation Sans", "tahoma" to "Liberation Sans", "verdana" to "Liberation Sans",
+        "times new roman" to "Gentium Book Basic", "times" to "Gentium Book Basic",
+        "courier new" to "Liberation Mono", "courier" to "Liberation Mono", "consolas" to "Liberation Mono"
+    )
 
     /** Returns null when no compatibility copy is required (including binary DOC). */
     fun prepare(source: File, cacheDir: File): File? {
         val signature = source.inputStream().use { it.readNBytesCompat(4) }
         if (!signature.contentEquals(byteArrayOf(0x50, 0x4b, 0x03, 0x04))) return null
         ZipFile(source).use { zip ->
-            val table = zip.getEntry("word/fontTable.xml") ?: return null
-            val fontTable = parseXml(zip.getInputStream(table).use { readXml(it) })
             val aliases = mutableMapOf<String, String>()
-            val fonts = fontTable.getElementsByTagNameNS("*", "font")
-            for (index in 0 until fonts.length) {
-                val font = fonts.item(index) as Element
-                val namespace = font.namespaceURI
-                if (!isWordNamespace(namespace)) continue
-                val name = font.getAttributeNS(namespace, "name")
-                if (!name.equals("inherit", ignoreCase = true)) continue
-                val alternative = font.getElementsByTagNameNS(namespace, "altName")
-                    .item(0) as? Element ?: continue
-                val value = alternative.getAttributeNS(namespace, "val").trim()
-                if (value.isNotEmpty() && !value.equals(name, ignoreCase = true)) aliases[name] = value
+            zip.getEntry("word/fontTable.xml")?.let { table ->
+                val fontTable = parseXml(zip.getInputStream(table).use { readXml(it) })
+                val fonts = fontTable.getElementsByTagNameNS("*", "font")
+                for (index in 0 until fonts.length) {
+                    val font = fonts.item(index) as Element
+                    val namespace = font.namespaceURI
+                    if (!isWordNamespace(namespace)) continue
+                    val name = font.getAttributeNS(namespace, "name").trim()
+                    val mapped = officeFonts[name.lowercase()]
+                    val alternative = font.getElementsByTagNameNS(namespace, "altName").item(0) as? Element
+                    val altName = alternative?.getAttributeNS(namespace, "val")?.trim().orEmpty()
+                    val mappedAlt = officeFonts[altName.lowercase()]
+                    val target = mapped ?: mappedAlt
+                    if (target != null) {
+                        if (name.isNotEmpty()) aliases[name.lowercase()] = target
+                        if (altName.isNotEmpty()) aliases[altName.lowercase()] = target
+                    }
+                }
             }
-            if (aliases.isEmpty()) return null
 
             val temporary = File.createTempFile("reader-fonts-", ".docx", cacheDir)
             try {
@@ -66,17 +75,36 @@ internal object DocxFontCompatibility {
                                 if (remaining < 0) throw IOException("El documento expandido es demasiado grande.")
                                 val xml = parseXml(bytes)
                                 var modified = false
-                                val runs = xml.getElementsByTagNameNS("*", "rFonts")
-                                for (index in 0 until runs.length) {
-                                    val run = runs.item(index) as Element
+                                val families = xml.getElementsByTagNameNS("*", "rFonts")
+                                for (index in 0 until families.length) {
+                                    val run = families.item(index) as Element
                                     val namespace = run.namespaceURI
                                     if (!isWordNamespace(namespace)) continue
                                     for (attribute in arrayOf("ascii", "hAnsi", "eastAsia", "cs")) {
                                         val node = run.getAttributeNodeNS(namespace, attribute) ?: continue
-                                        val replacement = aliases[node.value] ?: continue
+                                        val replacement = officeFonts[node.value.trim().lowercase()] ?: aliases[node.value.trim().lowercase()] ?: continue
                                         node.value = replacement
                                         modified = true
                                     }
+                                }
+                                if (entry.name.startsWith("word/theme/") && entry.name.endsWith(".xml")) {
+                                    val nodes = xml.getElementsByTagNameNS("*", "latin")
+                                    for (index in 0 until nodes.length) {
+                                        val node = nodes.item(index) as? Element ?: continue
+                                        val attr = node.getAttributeNode("typeface") ?: continue
+                                        val replacement = officeFonts[attr.value.trim().lowercase()] ?: aliases[attr.value.trim().lowercase()] ?: continue
+                                        attr.value = replacement; modified = true
+                                    }
+                                }
+                                // Hyphen runs can be present in document, header, footer, footnote and endnote parts.
+                                val textNodes = xml.getElementsByTagNameNS("*", "t")
+                                for (index in 0 until textNodes.length) {
+                                    val textNode = textNodes.item(index) as? Element ?: continue
+                                    if (!isWordNamespace(textNode.namespaceURI)) continue
+                                    val text = textNode.textContent ?: continue
+                                    if (!text.contains("--")) continue
+                                    val normalized = normalizeHyphenRuns(text)
+                                    if (normalized != text) { textNode.textContent = normalized; modified = true }
                                 }
                                 if (modified) {
                                     val transformer = TransformerFactory.newInstance().newTransformer()
@@ -97,6 +125,19 @@ internal object DocxFontCompatibility {
             } catch (failure: Throwable) {
                 temporary.delete()
                 throw failure
+            }
+        }
+    }
+
+    /** Insert break opportunities between hyphens without changing the source hyphen count. */
+    internal fun normalizeHyphenRuns(text: String): String {
+        return MULTI_HYPHEN_REGEX.replace(text) { match ->
+            val count = match.value.length
+            buildString(count * 2 - 1) {
+                for (index in 0 until count) {
+                    if (index > 0) append('\u200B')
+                    append('-')
+                }
             }
         }
     }

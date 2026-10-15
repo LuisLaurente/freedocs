@@ -24,8 +24,9 @@ object LibreOfficeEngine {
             checkCancelled()
             Log.i(TAG, "Inicializando LibreOfficeKit...")
             LibreOfficeKit.putenv("SAL_LOG=+WARN+INFO")
-            LibreOfficeKit.putenv("SAL_LOK_OPTIONS=compact_fonts")
             LibreOfficeKit.putenv("XDG_CACHE_HOME=${activity.cacheDir.absolutePath}")
+            LibreOfficeKit.putenv("FONTCONFIG_FILE=${File(activity.applicationInfo.dataDir, "etc/fonts/fonts.conf").absolutePath}")
+            LibreOfficeKit.putenv("FONTCONFIG_PATH=${File(activity.applicationInfo.dataDir, "etc/fonts").absolutePath}")
             LibreOfficeKit.init(activity)
             checkNotNull(LibreOfficeKit.getLibreOfficeKitHandle()) {
                 "LibreOfficeKit no devolvió un controlador después de inicializar."
@@ -84,6 +85,7 @@ object LibreOfficeEngine {
             checkCancelled()
             val outputPath = outputPdfFile.absolutePath
             Log.i(TAG, "Convirtiendo documento a PDF: $outputPath")
+            doc.initializeForRendering()
             // The native JNI wrapper calls GetStringUTFChars for all three arguments;
             // a null options argument aborts the entire Android process.
             doc.saveAs(outputPath, "pdf", "")

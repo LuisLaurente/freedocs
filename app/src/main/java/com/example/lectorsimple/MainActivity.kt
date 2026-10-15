@@ -3,6 +3,7 @@ package com.example.lectorsimple
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
@@ -13,9 +14,14 @@ import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.widget.Button
+import android.widget.CheckBox
+import android.widget.EditText
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import android.widget.SeekBar
 import android.widget.TextView
 import java.io.File
+import java.io.IOException
 import java.io.InterruptedIOException
 import java.util.concurrent.Future
 import java.util.concurrent.Semaphore
@@ -49,6 +55,13 @@ class MainActivity : Activity() {
     private var page = 0
     private var pageCount = 0
     private var wordMode = WordViewMode.HOJA
+    private var sourceIsPdf = false
+    private var pdfEditMode = false
+    private val pdfEdits = PdfDocumentEdits()
+    private var pendingEditedFile: File? = null
+    private var extractedPdfText = ""
+    private var editTextSize = 12f
+    private var editColor = Color.BLACK
     private var savedHojaState: Bundle? = null
     private var savedMovilState: Bundle? = null
     private var pendingState: Bundle? = null
@@ -123,11 +136,11 @@ class MainActivity : Activity() {
         }
         btnHoja = Button(this).apply {
             text = "Hoja (Diseño)"
-            setOnClickListener { switchWordMode(WordViewMode.HOJA) }
+            setOnClickListener { if (sourceIsPdf) setPdfEditMode(false) else switchWordMode(WordViewMode.HOJA) }
         }
         btnMovil = Button(this).apply {
             text = "Móvil (Texto)"
-            setOnClickListener { switchWordMode(WordViewMode.MOVIL) }
+            setOnClickListener { if (sourceIsPdf) setPdfEditMode(true) else switchWordMode(WordViewMode.MOVIL) }
         }
         modeBar.addView(btnHoja, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(0, 0, dp(4), 0) })
         modeBar.addView(btnMovil, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(4), 0, 0, 0) })
@@ -164,6 +177,17 @@ class MainActivity : Activity() {
     @Deprecated("Platform result API avoids an additional UI dependency.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_SAVE && resultCode == RESULT_OK) {
+            val target = data?.data ?: return
+            val edited = pendingEditedFile ?: return
+            worker.execute {
+                try { contentResolver.openOutputStream(target, "wt")?.use { output -> edited.inputStream().use { it.copyTo(output) } } ?: throw IOException("No se pudo guardar en el destino seleccionado.")
+                    edited.delete(); pendingEditedFile = null
+                    runOnUiThread { showMessage("PDF editado guardado correctamente."); showPdfAgain() }
+                } catch (failure: Exception) { edited.delete(); pendingEditedFile = null; runOnUiThread { showMessage("No se pudo guardar el PDF editado.") } }
+            }
+            return
+        }
         if (requestCode != REQUEST_OPEN || resultCode != RESULT_OK) return
         val selected = data?.data ?: return
         try {
@@ -187,6 +211,10 @@ class MainActivity : Activity() {
         pdfView = null
         wordView = null
         uri = selected
+        sourceIsPdf = false
+        pdfEditMode = false
+        pdfEdits.reset()
+        extractedPdfText = ""
         if (!restoring) {
             page = 0
             pendingState = null
@@ -222,7 +250,10 @@ class MainActivity : Activity() {
                             title.text = name
                             page = selectedPage
                             pageCount = count
-                            modeBar.visibility = View.GONE
+                            sourceIsPdf = true
+                            modeBar.visibility = View.VISIBLE
+                            updateModeButtons()
+                            extractedPdfText = try { PdfTextExtractor.extract(pdf.file).lineSequence().firstOrNull { it.isNotBlank() }.orEmpty() } catch (_: Exception) { "" }
                             showPdf(size, pendingState)
                             pendingState = null
                         }
@@ -329,6 +360,15 @@ class MainActivity : Activity() {
     }
 
     private fun updateModeButtons() {
+        if (sourceIsPdf) {
+            btnHoja.text = "Lectura"; btnMovil.text = "Editar PDF"
+            val selected = if (pdfEditMode) btnMovil else btnHoja
+            val other = if (pdfEditMode) btnHoja else btnMovil
+            selected.setTextColor(Color.WHITE); selected.setBackgroundColor(Color.rgb(35, 75, 140)); selected.setTypeface(null, Typeface.BOLD)
+            other.setTextColor(Color.DKGRAY); other.setBackgroundColor(Color.rgb(220, 224, 232)); other.setTypeface(null, Typeface.NORMAL)
+            return
+        }
+        btnHoja.text = "Hoja (Diseño)"; btnMovil.text = "Móvil (Texto)"
         if (wordMode == WordViewMode.HOJA) {
             btnHoja.setTextColor(Color.WHITE)
             btnHoja.setBackgroundColor(Color.rgb(35, 75, 140))
@@ -356,10 +396,81 @@ class MainActivity : Activity() {
         controls.addView(pageLabel, LinearLayout.LayoutParams(0, -2, 1f))
         controls.addView(next, LinearLayout.LayoutParams(0, -2, 1f))
         pdfView = PdfZoomView(this, ::renderFrame)
+        pdfView?.documentEdits = pdfEdits
+        pdfView?.editMode = pdfEditMode
+        pdfView?.onExistingText = { extractedPdfText.lineSequence().filter { it.isNotBlank() }.take(1).joinToString(" ") }
+        pdfView?.onEditText = { bounds, background, text -> showTextEditor(bounds, background, text, true) }
+        pdfView?.onEditTap = { tool, x, y -> if (tool == PdfTool.ADD_TEXT) showTextEditor(RectF(x, y, x + 190f, y + 48f), Color.WHITE, "", false) }
         content.addView(pdfView, LinearLayout.LayoutParams(-1, 0, 1f))
+        if (sourceIsPdf) content.addView(buildPdfEditToolbar(), LinearLayout.LayoutParams(-1, -2))
         content.addView(controls, LinearLayout.LayoutParams(-1, -2))
         pdfView?.showPage(page, size, restoreState)
         updateControls()
+    }
+
+    private fun buildPdfEditToolbar(): View {
+        val scroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
+        val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; visibility = if (pdfEditMode) View.VISIBLE else View.GONE }
+        fun tool(label: String, tool: PdfTool) = Button(this).apply { text = label; setOnClickListener { pdfView?.activeTool = tool } }
+        bar.addView(tool("Editar texto", PdfTool.REPLACE_TEXT)); bar.addView(tool("+ Texto", PdfTool.ADD_TEXT)); bar.addView(tool("Mover", PdfTool.MOVE))
+        bar.addView(tool("Firmar", PdfTool.INK)); bar.addView(tool("Resaltar", PdfTool.HIGHLIGHT))
+        bar.addView(Button(this).apply { text = "Borrar"; setOnClickListener { pdfEdits.clearPage(page); pdfView?.invalidate() } })
+        bar.addView(Button(this).apply { text = "Deshacer"; setOnClickListener { pdfEdits.undo(); pdfView?.invalidate() } })
+        bar.addView(Button(this).apply { text = "Guardar PDF"; setOnClickListener { saveEditedPdf() } })
+        scroll.addView(bar); return scroll
+    }
+
+    private fun setPdfEditMode(enabled: Boolean) {
+        pdfEditMode = enabled
+        updateModeButtons()
+        pdfView?.editMode = enabled
+        (content.getChildAt(1) as? HorizontalScrollView)?.getChildAt(0)?.visibility = if (enabled) View.VISIBLE else View.GONE
+    }
+
+    private fun showTextEditor(bounds: RectF, background: Int, initial: String, cover: Boolean) {
+        val input = EditText(this).apply { setText(initial); minLines = 1; maxLines = 6; textSize = editTextSize }
+        val coverCheck = CheckBox(this).apply { text = "Cubrir el texto original"; isChecked = cover }
+        val sizeRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val preview = TextView(this).apply { text = "${editTextSize.toInt()} sp"; setPadding(dp(12), 0, dp(12), 0) }
+        sizeRow.addView(Button(this).apply { text = "A−"; setOnClickListener { editTextSize = (editTextSize - 1).coerceAtLeast(6f); preview.text = "${editTextSize.toInt()} sp"; input.textSize = editTextSize } })
+        sizeRow.addView(preview); sizeRow.addView(Button(this).apply { text = "A+"; setOnClickListener { editTextSize = (editTextSize + 1).coerceAtMost(72f); preview.text = "${editTextSize.toInt()} sp"; input.textSize = editTextSize } })
+        val colors = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        listOf("Negro" to Color.BLACK, "Azul" to Color.BLUE, "Rojo" to Color.RED).forEach { (label, color) -> colors.addView(Button(this).apply { text = label; setOnClickListener { editColor = color } }) }
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), dp(4)); addView(input); addView(sizeRow); addView(colors); if (cover) addView(coverCheck) }
+        android.app.AlertDialog.Builder(this).setTitle(if (cover) "Editar texto" else "Añadir texto").setView(body)
+            .setNegativeButton("Cancelar", null).setPositiveButton("Aplicar") { _, _ ->
+                if (cover && !coverCheck.isChecked) return@setPositiveButton
+                pdfEdits.add(PdfTextEdit(System.nanoTime(), page, RectF(bounds), input.text.toString(), editTextSize, editColor, background, coverCheck.isChecked))
+                pdfView?.invalidate()
+            }.show()
+    }
+
+    private fun saveEditedPdf() {
+        val active = session ?: return
+        val temp = File.createTempFile("reader-edited-", ".pdf", cacheDir)
+        val revision = generation.get()
+        showMessage("Guardando PDF editado…")
+        worker.execute {
+            try {
+                PdfSaver.saveEditedPdf(active, pdfEdits, temp)
+                val source = uri
+                val savedDirectly = try {
+                    if (source == null) false else contentResolver.openOutputStream(source, "wt")?.use { output -> temp.inputStream().use { it.copyTo(output) }; true } ?: false
+                } catch (_: Exception) { false }
+                if (savedDirectly) { temp.delete(); runOnUiThread { if (revision == generation.get()) { showMessage("PDF editado guardado en el documento original."); showPdfAgain() } } }
+                else runOnUiThread {
+                    if (revision != generation.get() || isDestroyed) { temp.delete(); return@runOnUiThread }
+                    pendingEditedFile = temp
+                    val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "application/pdf"; putExtra(Intent.EXTRA_TITLE, "documento-editado.pdf") }
+                    startActivityForResult(intent, REQUEST_SAVE)
+                }
+            } catch (failure: Exception) { temp.delete(); runOnUiThread { if (revision == generation.get()) { showMessage("No se pudo guardar el PDF editado."); showPdfAgain() } } }
+        }
+    }
+
+    private fun showPdfAgain() {
+        val active = session ?: return
+        worker.execute { try { val size = active.pageSize(page); runOnUiThread { if (!isDestroyed) showPdf(size, pdfView?.savePosition()) } } catch (_: Exception) {} }
     }
 
     private fun changePage(index: Int) {
@@ -497,5 +608,5 @@ class MainActivity : Activity() {
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
-    companion object { private const val REQUEST_OPEN = 1001 }
+    companion object { private const val REQUEST_OPEN = 1001; private const val REQUEST_SAVE = 1002 }
 }
